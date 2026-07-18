@@ -31,6 +31,8 @@ constexpr size_t I2S_VALUES_PER_BLOCK = DMA_FRAME_COUNT * CHANNEL_COUNT;
 constexpr size_t I2S_BYTES_PER_FRAME = CHANNEL_COUNT * sizeof(int32_t);
 constexpr uint32_t I2S_READ_TIMEOUT_MS = 100;
 constexpr uint32_t DEBUG_PRINT_INTERVAL_MS = 500;
+constexpr float DIRECTION_TRIGGER_THRESHOLD = 0.80f;
+constexpr const char *BACKGROUND_LABEL = "background";
 
 static_assert(
     EI_CLASSIFIER_FREQUENCY == SAMPLE_RATE,
@@ -60,6 +62,7 @@ static float directionMic2[GCC_PHAT_N_BUFFER];
 static float directionMic3[GCC_PHAT_N_BUFFER];
 static float directionMic4[GCC_PHAT_N_BUFFER];
 static size_t directionSampleCount = 0;
+static size_t directionWriteIndex = 0;
 
 // 16,000샘플 분류 버퍼는 내부 RAM을 아끼기 위해 PSRAM에 할당한다.
 static float *classifierBuffer = nullptr;
@@ -156,6 +159,7 @@ bool restartSynchronizedI2S()
     i2s_channel_disable(i2s1RxChannel);
 
     directionSampleCount = 0;
+    directionWriteIndex = 0;
     classifierSampleCount = 0;
 
     bool started = startSynchronizedI2S();
@@ -298,31 +302,19 @@ void runDirectionEstimate()
     );
 }
 
-void processDirectionBlock(size_t frameCount)
+void storeDirectionBlock(size_t frameCount)
 {
-    size_t sourceIndex = 0;
+    // 분류 결과가 나올 때까지 최신 4채널 샘플을 순환 버퍼에 보관한다.
+    // 네 채널에 동일한 인덱스를 사용하므로 마이크 사이의 시간 관계가 유지된다.
+    for (size_t i = 0; i < frameCount; ++i) {
+        directionMic1[directionWriteIndex] = pcm24ToFloat(mic1Buffer[i]);
+        directionMic2[directionWriteIndex] = pcm24ToFloat(mic2Buffer[i]);
+        directionMic3[directionWriteIndex] = pcm24ToFloat(mic3Buffer[i]);
+        directionMic4[directionWriteIndex] = pcm24ToFloat(mic4Buffer[i]);
 
-    while (sourceIndex < frameCount) {
-        size_t freeCount = GCC_PHAT_N_BUFFER - directionSampleCount;
-        size_t remaining = frameCount - sourceIndex;
-        size_t copyCount = remaining < freeCount ? remaining : freeCount;
-
-        for (size_t i = 0; i < copyCount; ++i) {
-            size_t source = sourceIndex + i;
-            size_t destination = directionSampleCount + i;
-
-            directionMic1[destination] = pcm24ToFloat(mic1Buffer[source]);
-            directionMic2[destination] = pcm24ToFloat(mic2Buffer[source]);
-            directionMic3[destination] = pcm24ToFloat(mic3Buffer[source]);
-            directionMic4[destination] = pcm24ToFloat(mic4Buffer[source]);
-        }
-
-        sourceIndex += copyCount;
-        directionSampleCount += copyCount;
-
-        if (directionSampleCount == GCC_PHAT_N_BUFFER) {
-            runDirectionEstimate();
-            directionSampleCount = 0;
+        directionWriteIndex = (directionWriteIndex + 1) % GCC_PHAT_N_BUFFER;
+        if (directionSampleCount < GCC_PHAT_N_BUFFER) {
+            ++directionSampleCount;
         }
     }
 }
@@ -355,6 +347,9 @@ void runSoundClassifier()
         return;
     }
 
+    size_t bestIndex = 0;
+    float bestScore = result.classification[0].value;
+
     ESP_LOGI(TAG, "Classifier result:");
     for (size_t i = 0; i < EI_CLASSIFIER_LABEL_COUNT; ++i) {
         ESP_LOGI(
@@ -363,7 +358,41 @@ void runSoundClassifier()
             result.classification[i].label,
             result.classification[i].value
         );
+
+        if (result.classification[i].value > bestScore) {
+            bestIndex = i;
+            bestScore = result.classification[i].value;
+        }
     }
+
+    const char *bestLabel = result.classification[bestIndex].label;
+    bool isTargetSound =
+        strcmp(bestLabel, BACKGROUND_LABEL) != 0 &&
+        bestScore >= DIRECTION_TRIGGER_THRESHOLD;
+
+    if (!isTargetSound) {
+        ESP_LOGI(
+            TAG,
+            "Direction skipped: best=%s (%.3f), threshold=%.2f",
+            bestLabel,
+            bestScore,
+            DIRECTION_TRIGGER_THRESHOLD
+        );
+        return;
+    }
+
+    if (directionSampleCount < GCC_PHAT_N_BUFFER) {
+        ESP_LOGW(
+            TAG,
+            "Direction skipped: only %u/%u synchronized samples buffered",
+            static_cast<unsigned>(directionSampleCount),
+            static_cast<unsigned>(GCC_PHAT_N_BUFFER)
+        );
+        return;
+    }
+
+    ESP_LOGI(TAG, "Target sound detected: %s (%.3f)", bestLabel, bestScore);
+    runDirectionEstimate();
 }
 
 void processClassifierBlock(size_t frameCount)
@@ -496,7 +525,8 @@ extern "C" void app_main(void)
         }
 
         deinterleaveMicrophones(framesRead);
-        processDirectionBlock(framesRead);
+        // 수집은 계속하지만, 방향 연산은 분류기가 관심 소리를 검출한 뒤에만 실행한다.
+        storeDirectionBlock(framesRead);
         processClassifierBlock(framesRead);
         printAudioStatus(framesRead);
     }
