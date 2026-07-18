@@ -1,13 +1,15 @@
 #include "direction_estimate.h"
 
 esp_err_t gcc_phat_init(void) {
-    return dsps_fft2r_init_fc32(NULL, GCC_PHAT_N_FFT);
+    // Edge Impulse의 ESP-DSP 엔진도 같은 전역 twiddle table을 사용한다.
+    // 방향 추정(2048)과 모델 DSP(최대 4096)를 모두 처리할 크기로 한 번 초기화한다.
+    return dsps_fft2r_init_fc32(NULL, CONFIG_DSP_MAX_FFT_SIZE);
 }
 
 // 마이크 사이의 시간차를 계산하는 함수
 // mic1: leftmic, southmic
 // mic2: rightmic, northmic
-float gcc_phat_compute(const float *mic1sig, const float *mic2sigS) {
+float gcc_phat_compute(const float *mic1sig, const float *mic2sig) {
 
     // [1] Zero-pad into complex interleaved buffers (size = N_FFT * 2 floats)
     static float buf_mic1[GCC_PHAT_N_FFT * 2];
@@ -37,7 +39,9 @@ float gcc_phat_compute(const float *mic1sig, const float *mic2sigS) {
         float im_r = im1*re2 - re1*im2;
 
         float mag = sqrtf(re_r*re_r + im_r*im_r);
-        if (mag > 0.0f) {
+        // 무음 또는 매우 작은 스펙트럼에서 0에 가까운 값으로 나누면
+        // NaN/Inf가 생길 수 있으므로 해당 bin은 무효로 처리한다.
+        if (mag > 1.0e-12f) {
             buf_result[i*2]   = re_r / mag;
             buf_result[i*2+1] = im_r / mag;
         } else {

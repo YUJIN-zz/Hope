@@ -1,0 +1,10 @@
+{
+  "name": "esp-dsp-fft",
+  "version": "1.0.0",
+  "description": "Minimal ESP-DSP compatible radix-2 floating-point FFT subset",
+  "build": {
+    "srcDir": "src"
+  },
+  "frameworks": "arduino",
+  "platforms": "espressif32"
+}

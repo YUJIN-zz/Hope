@@ -1,0 +1,24 @@
+{
+  "name": "HOPE_Sound_Classification_inferencing",
+  "version": "1.0.0",
+  "build": {
+    "srcDir": "src",
+    "srcFilter": [
+      "+<*>",
+      "-<edge-impulse-sdk/CMSIS/DSP/Source/**>",
+      "-<edge-impulse-sdk/CMSIS/NN/Source/**>",
+      "-<edge-impulse-sdk/porting/espressif/esp-dsp/**>",
+      "-<edge-impulse-sdk/porting/arduino/**>",
+      "-<edge-impulse-sdk/porting/particle/**>",
+      "-<edge-impulse-sdk/tensorflow/lite/micro/fake_micro_context.cpp>",
+      "-<edge-impulse-sdk/tensorflow/lite/micro/kernels/kernel_runner.cpp>",
+      "-<edge-impulse-sdk/tensorflow/lite/micro/mock_micro_graph.cpp>",
+      "-<edge-impulse-sdk/tensorflow/lite/micro/recording_micro_allocator.cpp>",
+      "-<edge-impulse-sdk/tensorflow/lite/micro/recording_single_arena_buffer_allocator.cpp>",
+      "-<edge-impulse-sdk/tensorflow/lite/micro/test_helper_custom_ops.cpp>",
+      "-<edge-impulse-sdk/tensorflow/lite/micro/test_helpers.cpp>"
+    ]
+  },
+  "frameworks": "arduino",
+  "platforms": "espressif32"
+}
